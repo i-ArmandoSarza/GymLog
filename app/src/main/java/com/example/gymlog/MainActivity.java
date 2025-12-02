@@ -7,13 +7,16 @@ import android.view.View;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.example.gymlog.database.GymLogRepository;
+import com.example.gymlog.database.entities.GymLog;
 import com.example.gymlog.databinding.ActivityMainBinding;
 
 import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
-    ActivityMainBinding binding;
+    private ActivityMainBinding binding;
+    private GymLogRepository repository;
 
     public static final String TAG = "DAC_GYMLOG";
     String mExercise = "";
@@ -27,6 +30,9 @@ public class MainActivity extends AppCompatActivity {
         // Allows us to reference our information.
         setContentView(binding.getRoot());
 
+        // Gives us access to our database
+        repository = GymLogRepository.getRepository(getApplication());
+
         // Allows us to scroll through the log display screen
         binding.logDisplayTextView.setMovementMethod(new ScrollingMovementMethod());
 
@@ -35,9 +41,15 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View v) {
                 getInformationFromDisplay();    // Get information first
+                insertGymLogRecord();
                 updateDisplay();                // Update and output onto display
             }
         });
+    }
+
+    private void insertGymLogRecord(){
+        GymLog log = new GymLog(mExercise, mWeight, mReps);
+        repository.insertGymLog(log);
     }
 
     /**
@@ -50,6 +62,7 @@ public class MainActivity extends AppCompatActivity {
         Log.d(TAG, "current info: "+currentInfo);
         String newDisplay = String.format(Locale.US,"Exercise:%s%nWeight:%.2f%nReps:%d%n=-=-=-=%n%s", mExercise, mWeight, mReps, currentInfo);
         binding.logDisplayTextView.setText(newDisplay);
+        Log.i(TAG, repository.getAllLogs().toString());
     }
 
     /**
