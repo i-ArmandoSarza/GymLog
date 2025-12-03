@@ -3,6 +3,7 @@ package com.example.gymlog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
@@ -10,11 +11,11 @@ import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.lifecycle.LiveData;
 
 import com.example.gymlog.database.GymLogRepository;
 import com.example.gymlog.database.entities.GymLog;
@@ -26,6 +27,9 @@ import java.util.ArrayList;
 public class MainActivity extends AppCompatActivity {
 
     private static final String MAIN_ACTIVITY_USER_ID = "com.example.gymlog.MAIN_ACTIVITY_USER_ID";
+    static final String SHARED_PREFERENCE_USERID_KEY = "com.example.gymlog.SHARED_PREFERENCE_USERID_KEY";
+    private static final String SAVED_INSTANCE_STATE_USERID_KEY = "com.example.gymlog.SAVED_INSTANCE_STATE_USERID_KEY";
+    private static final int LOGGED_OUT = -1;
     private ActivityMainBinding binding;
     private GymLogRepository repository;
 
@@ -34,7 +38,6 @@ public class MainActivity extends AppCompatActivity {
     double mWeight = 0.0;
     int mReps = 0;
 
-    //TODO: Add login information.
     private int loggedInUserId = -1;
     private User user;
 
@@ -45,21 +48,20 @@ public class MainActivity extends AppCompatActivity {
         // Allows us to reference our information.
         setContentView(binding.getRoot());
 
-        loginUser();
-        invalidateOptionsMenu();
-
-        if(loggedInUserId == -1){
-            Intent intent = LoginActivity.loginIntentFactory(getApplicationContext());
-            startActivity(intent);
-
-        }
-
         // Gives us access to our database
         repository = GymLogRepository.getRepository(getApplication());
+        loginUser(savedInstanceState);
+
+
+        // User is not logged in at this point, go to login screen
+        if (loggedInUserId == -1) {
+            Intent intent = LoginActivity.loginIntentFactory(getApplicationContext());
+            startActivity(intent);
+        }
+        updateSharedPreference();
 
         // Allows us to scroll through the log display screen
         binding.logDisplayTextView.setMovementMethod(new ScrollingMovementMethod());
-
         updateDisplay();
         // This handles the LOG button function
         binding.logButton.setOnClickListener(new View.OnClickListener() {
@@ -79,10 +81,36 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void loginUser() {
-        // TODO: Make login method FUNCTIONAL
-        user = new User("Armando", "password");
-        loggedInUserId = getIntent().getIntExtra(MAIN_ACTIVITY_USER_ID, -1);
+    private void loginUser(Bundle savedInstanceState) {
+        // Check shared preference for logged in user read from the file
+        SharedPreferences sharedPreferences = getApplicationContext().getSharedPreferences(getString(R.string.preference_file_key),
+                Context.MODE_PRIVATE);
+
+        loggedInUserId = sharedPreferences.getInt(getString(R.string.preference_userId_key), LOGGED_OUT);
+
+        if (loggedInUserId == LOGGED_OUT & savedInstanceState != null && savedInstanceState.containsKey(SAVED_INSTANCE_STATE_USERID_KEY)){
+            loggedInUserId = savedInstanceState.getInt(SAVED_INSTANCE_STATE_USERID_KEY, LOGGED_OUT);
+        }
+        if (loggedInUserId == LOGGED_OUT) {
+            loggedInUserId = getIntent().getIntExtra(MAIN_ACTIVITY_USER_ID, LOGGED_OUT);
+        }
+        if (loggedInUserId == LOGGED_OUT) {
+            return;
+        }
+        LiveData<User> userObserver = repository.getUserByUserId(loggedInUserId);
+        userObserver.observe(this, user -> {
+            if (user != null) {
+                this.user = user;
+                invalidateOptionsMenu();
+            }
+        });
+    }
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt(SAVED_INSTANCE_STATE_USERID_KEY, loggedInUserId);
+        updateSharedPreference();
     }
 
     @Override
@@ -96,12 +124,15 @@ public class MainActivity extends AppCompatActivity {
     public boolean onPrepareOptionsMenu(Menu menu) {
         MenuItem item = menu.findItem(R.id.logoutMenuItem);
         item.setVisible(true);
+        if (user == null) {
+            return true;
+        }
         item.setTitle(user.getUsername());
         item.setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
             @Override
             public boolean onMenuItemClick(@NonNull MenuItem item) {
                 showLogoutDialog();
-                return false;
+                return true;
             }
         });
         return true;
@@ -131,19 +162,30 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void logout() {
-        //TODO: Finish logout method
+        loggedInUserId = LOGGED_OUT;
+        updateSharedPreference();
+        getIntent().putExtra(MAIN_ACTIVITY_USER_ID, LOGGED_OUT);
+
         startActivity(LoginActivity.loginIntentFactory(getApplicationContext()));
     }
 
-    static Intent mainActivityIntentFactory(Context context, int userId){
+    private void updateSharedPreference(){
+        SharedPreferences sharedPreferences = getApplicationContext().getSharedPreferences(getString(R.string.preference_file_key),
+                Context.MODE_PRIVATE);
+        SharedPreferences.Editor sharedPrefEditor = sharedPreferences.edit();
+        sharedPrefEditor.putInt(getString(R.string.preference_userId_key), loggedInUserId);
+        sharedPrefEditor.apply();
+    }
+
+    static Intent mainActivityIntentFactory(Context context, int userId) {
         Intent intent = new Intent(context, MainActivity.class);
         intent.putExtra(MAIN_ACTIVITY_USER_ID, userId);
         return intent;
 
     }
 
-    private void insertGymLogRecord(){
-        if(mExercise.isEmpty()){
+    private void insertGymLogRecord() {
+        if (mExercise.isEmpty()) {
             return;
         }
         GymLog log = new GymLog(mExercise, mWeight, mReps, loggedInUserId);
@@ -154,13 +196,13 @@ public class MainActivity extends AppCompatActivity {
      * This method allows us to update the information
      * we retrieve from the user to the display.
      */
-    private void updateDisplay(){
-        ArrayList<GymLog> allLogs = repository.getAllLogs();
-        if (allLogs.isEmpty()){
+    private void updateDisplay() {
+        ArrayList<GymLog> allLogs = repository.getAllLogsByUserId(loggedInUserId);
+        if (allLogs.isEmpty()) {
             binding.logDisplayTextView.setText(R.string.nothing_to_show_time_to_hit_the_gym);
         }
         StringBuilder sb = new StringBuilder();
-        for (GymLog log : allLogs){
+        for (GymLog log : allLogs) {
             sb.append(log);
         }
         binding.logDisplayTextView.setText(sb.toString());
@@ -170,19 +212,19 @@ public class MainActivity extends AppCompatActivity {
      * This method grabs the input information entered on the lines of
      * Exercise, Weights and Reps and placed them in our global variables.
      */
-    private void getInformationFromDisplay(){
+    private void getInformationFromDisplay() {
         // Take value from the user input line of "Exercise"
         mExercise = binding.exerciseInputEditText.getText().toString();
         // Take value from input line of Weight (Need to parse to Double)
         try {
             mWeight = Double.parseDouble(binding.weightInputEditText.getText().toString());
-        }catch (NumberFormatException e){
+        } catch (NumberFormatException e) {
             Log.d(TAG, "Error reading value from Weight edit text.");
         }
         // Take value from input line of Weight (Need to parse to Integer)
         try {
             mReps = Integer.parseInt(binding.repInputEditText.getText().toString());
-        }catch (NumberFormatException e){
+        } catch (NumberFormatException e) {
             Log.d(TAG, "Error reading value from Reps edit text.");
         }
 
